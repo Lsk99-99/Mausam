@@ -56,7 +56,7 @@ class OpenMeteoError(Exception):
 
 
 def _get_json(url: str, params: dict, what: str) -> dict:
-    """GET JSON with limited retry/backoff."""
+    """GET JSON with retry handling for temporary failures and rate limits."""
     last_error = None
 
     for attempt in range(2):
@@ -67,6 +67,7 @@ def _get_json(url: str, params: dict, what: str) -> dict:
                 timeout=TIMEOUT_SECONDS
             )
 
+            # Open-Meteo rate limit
             if resp.status_code == 429:
                 if attempt == 0:
                     time.sleep(5)
@@ -74,7 +75,7 @@ def _get_json(url: str, params: dict, what: str) -> dict:
 
                 raise OpenMeteoError(
                     f"{what} was rate limited by Open-Meteo (HTTP 429). "
-                    f"Please try again shortly."
+                    "Please try again shortly."
                 )
 
             resp.raise_for_status()
