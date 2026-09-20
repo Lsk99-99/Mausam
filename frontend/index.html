@@ -527,7 +527,7 @@ async function boot() {
     state.bootLoading = false;
     state.error = null;
     render();
-    await loadHome();
+    loadHome();
   } catch (e){
     state.bootLoading = false;
 
