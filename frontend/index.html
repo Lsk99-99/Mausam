@@ -585,7 +585,7 @@ function setPersona(id) {
 function setHealthCondition(condition) {
   state.healthCondition = condition;
   localStorage.setItem("mausam_health_condition", condition);
-  loadhome();
+  render();
 }
 
 function setFitnessActivity(activity) {
