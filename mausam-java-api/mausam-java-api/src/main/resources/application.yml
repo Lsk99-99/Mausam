@@ -3,7 +3,7 @@ server:
 
 mausam:
   python-service:
-     base-url: https://mausam-python-service.onrender.com
+     base-url: https://mausam-python-service-eu.onrender.com
   jwt:
     # Dev-only secret — replace with a real secret (env var) before deploying anywhere real.
     secret: ${MAUSAM_JWT_SECRET}
