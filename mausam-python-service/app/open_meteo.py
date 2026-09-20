@@ -38,7 +38,7 @@ _geocode_cache: dict = {}
 # successful results are ever cached — a failure is never remembered,
 # so the next call always retries for real.
 _fetch_cache: dict = {}
-CACHE_TTL_SECONDS = 90
+CACHE_TTL_SECONDS = 900
 
 
 def _cached_fetch(cache_key, fetch_fn):
@@ -56,7 +56,8 @@ class OpenMeteoError(Exception):
 
 
 def _get_json(url: str, params: dict, what: str) -> dict:
-    """GET JSON with retry handling for temporary failures and rate limits."""
+    """GET JSON with limited retry/backoff."""
+
     last_error = None
 
     for attempt in range(2):
@@ -67,10 +68,9 @@ def _get_json(url: str, params: dict, what: str) -> dict:
                 timeout=TIMEOUT_SECONDS
             )
 
-            # Open-Meteo rate limit
             if resp.status_code == 429:
                 if attempt == 0:
-                    time.sleep(5)
+                    time.sleep(10)
                     continue
 
                 raise OpenMeteoError(
@@ -88,7 +88,7 @@ def _get_json(url: str, params: dict, what: str) -> dict:
             last_error = exc
 
             if attempt == 0:
-                time.sleep(1)
+                time.sleep(2)
 
     raise OpenMeteoError(
         f"{what} failed after retry: {last_error}"
