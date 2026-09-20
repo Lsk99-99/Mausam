@@ -528,11 +528,17 @@ async function boot() {
     state.error = null;
     render();
     await loadHome();
-  } catch (e) {
+  } catch (e){
     state.bootLoading = false;
-    state.error = "Can't reach the Mausam API at " + API_BASE + " — is it running? (See mausam-java-api, port 8080)";
+
+    console.error("MAUSAM API ERROR:", e);
+
+    state.error =
+        "Mausam API Error: " +
+        (e?.message || String(e));
+
     render();
-  }
+   }
 }
 
 async function loadHome() {
