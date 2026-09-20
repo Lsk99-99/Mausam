@@ -313,7 +313,20 @@
 <div class="app" id="app"></div>
 
 <script>
-const API_BASE = "https://mausam-java-api-mausam-java-api.onrender.com";
+const API_BASE = "http://localhost:8080";
+
+// CRASH-FREE NET (global): catches anything that slips past render()'s
+// own try/catch — e.g. an error thrown directly inside an onclick
+// handler, or an unhandled rejection in an async function. Without this,
+// such an error can silently kill the page (nothing responds to taps
+// anymore) with zero visible feedback. This guarantees the person always
+// sees *something* actionable instead of a frozen screen.
+window.addEventListener("error", (event) => {
+  console.error("Uncaught error:", event.error || event.message);
+});
+window.addEventListener("unhandledrejection", (event) => {
+  console.error("Unhandled promise rejection:", event.reason);
+});
 
 /* Minimal inline icon set (lucide-style strokes) so this file has zero external JS deps */
 const ICONS = {
@@ -386,6 +399,12 @@ async function fetchJSON(path, options = {}) {
     try {
       const body = await res.json();
       if (body?.message) msg = body.message;
+      if (res.status === 401 && (body?.error === "no_token_provided" || body?.error === "invalid_or_expired_token")) {
+        // Session is gone (expired token, or none at all) — bounce back
+        // to the login screen with a clear reason instead of leaving the
+        // user staring at a confusing generic error on a broken page.
+        forceLogout("Your session expired — please log in again.");
+      }
     } catch (e) { /* response wasn't JSON — keep default message */ }
     throw new Error(msg);
   }
@@ -394,9 +413,11 @@ async function fetchJSON(path, options = {}) {
 
 let authToken = localStorage.getItem("mausam_token");
 let authUser = JSON.parse(localStorage.getItem("mausam_user") || "null");
-let authMode = "login"; // "login" | "signup"
+let authMode = "login"; // "login" | "signup" | "verify"
 let authError = null;
+let authNotice = null;
 let authSubmitting = false;
+let pendingIdentifier = null; // identifier awaiting OTP verification
 
 let state = {
   personas: [],
@@ -423,57 +444,79 @@ function getGreeting() {
 }
 
 /* ===== Auth screen ===== */
+// authMode: "login" | "signup" | "verify"
 function renderAuthScreen() {
   const isSignup = authMode === "signup";
+  const isVerify = authMode === "verify";
+
   document.getElementById("app").innerHTML = `
     <div class="auth-wrap">
       <div class="auth-card">
         <p class="display auth-title">Mausam</p>
-        <p class="auth-subtitle">${isSignup ? "Create an account to get started" : "Log in to continue"}</p>
+        <p class="auth-subtitle">
+          ${isVerify ? `Enter the code sent to ${escapeHtml(pendingIdentifier || "")}` : (isSignup ? "Create an account to get started" : "Log in to continue")}
+        </p>
 
-        ${authError ? `<div class="auth-error">${authError}</div>` : ""}
+        ${authError ? `<div class="auth-error">${escapeHtml(authError)}</div>` : ""}
+        ${authNotice ? `<div class="auth-error" style="background:#E4EFEC; color:#1F5C43;">${escapeHtml(authNotice)}</div>` : ""}
 
         <form id="auth-form">
-          ${isSignup ? `
+          ${isVerify ? `
             <div class="auth-field">
-              <label>Name</label>
-              <input id="auth-name" type="text" autocomplete="name" required />
+              <label>Verification code</label>
+              <input id="auth-otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code" required />
             </div>
-          ` : ""}
-          <div class="auth-field">
-            <label>Email</label>
-            <input id="auth-email" type="email" autocomplete="email" required />
-          </div>
-          <div class="auth-field">
-            <label>Password</label>
-            <input id="auth-password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" minlength="6" required />
-          </div>
+          ` : `
+            ${isSignup ? `
+              <div class="auth-field">
+                <label>Name</label>
+                <input id="auth-name" type="text" autocomplete="name" required />
+              </div>
+            ` : ""}
+            <div class="auth-field">
+              <label>Email or phone number</label>
+              <input id="auth-identifier" type="text" autocomplete="username" placeholder="you@example.com or +91XXXXXXXXXX" required />
+            </div>
+            <div class="auth-field">
+              <label>Password</label>
+              <input id="auth-password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" minlength="8" required />
+            </div>
+          `}
           <button type="submit" class="auth-btn" ${authSubmitting ? "disabled" : ""}>
-            ${authSubmitting ? "Please wait…" : (isSignup ? "Sign Up" : "Log In")}
+            ${authSubmitting ? "Please wait…" : (isVerify ? "Verify & Continue" : (isSignup ? "Sign Up" : "Log In"))}
           </button>
         </form>
 
-        <div class="auth-toggle">
-          ${isSignup ? "Already have an account?" : "New to Mausam?"}
-          <button type="button" onclick="switchAuthMode()">${isSignup ? "Log In" : "Sign Up"}</button>
-        </div>
+        ${isVerify ? `
+          <div class="auth-toggle">
+            Didn't get a code?
+            <button type="button" onclick="resendOtp()">Resend</button>
+          </div>
+        ` : `
+          <div class="auth-toggle">
+            ${isSignup ? "Already have an account?" : "New to Mausam?"}
+            <button type="button" onclick="switchAuthMode()">${isSignup ? "Log In" : "Sign Up"}</button>
+          </div>
+        `}
       </div>
     </div>
   `;
   document.getElementById("auth-form").addEventListener("submit", (e) => {
     e.preventDefault();
-    submitAuth();
+    if (isVerify) verifyOtp();
+    else submitAuth();
   });
 }
 
 function switchAuthMode() {
   authMode = authMode === "signup" ? "login" : "signup";
   authError = null;
+  authNotice = null;
   renderAuthScreen();
 }
 
 async function submitAuth() {
-  const email = document.getElementById("auth-email").value.trim();
+  const identifier = document.getElementById("auth-identifier").value.trim();
   const password = document.getElementById("auth-password").value;
   const name = authMode === "signup" ? document.getElementById("auth-name").value.trim() : undefined;
 
@@ -482,24 +525,77 @@ async function submitAuth() {
   renderAuthScreen();
 
   try {
-    const path = authMode === "signup" ? "/api/auth/signup" : "/api/auth/login";
-    const body = authMode === "signup" ? { name, email, password } : { email, password };
-    const data = await fetchJSON(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    authToken = data.token;
-    authUser = { name: data.name, email: data.email };
-    localStorage.setItem("mausam_token", authToken);
-    localStorage.setItem("mausam_user", JSON.stringify(authUser));
-    authSubmitting = false;
-    boot();
+    if (authMode === "signup") {
+      // Step 1 of 2: request a verification code, don't log in yet.
+      await fetchJSON("/api/auth/signup/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, identifier, password }),
+      });
+      pendingIdentifier = identifier;
+      authMode = "verify";
+      authSubmitting = false;
+      authNotice = "Code sent — check your email/phone (or the server console if no email service is configured).";
+      renderAuthScreen();
+    } else {
+      const data = await fetchJSON("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier, password }),
+      });
+      completeAuth(data);
+    }
   } catch (e) {
     authSubmitting = false;
     authError = e.message || "Something went wrong — please try again.";
     renderAuthScreen();
   }
+}
+
+async function verifyOtp() {
+  const otp = document.getElementById("auth-otp").value.trim();
+  authSubmitting = true;
+  authError = null;
+  authNotice = null;
+  renderAuthScreen();
+
+  try {
+    const data = await fetchJSON("/api/auth/signup/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier: pendingIdentifier, otp }),
+    });
+    completeAuth(data);
+  } catch (e) {
+    authSubmitting = false;
+    authError = e.message || "Incorrect code — please try again.";
+    renderAuthScreen();
+  }
+}
+
+async function resendOtp() {
+  authError = null;
+  try {
+    await fetchJSON("/api/auth/signup/resend", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier: pendingIdentifier }),
+    });
+    authNotice = "New code sent.";
+  } catch (e) {
+    authError = e.message || "Couldn't resend the code — please try again.";
+  }
+  renderAuthScreen();
+}
+
+function completeAuth(data) {
+  authToken = data.token;
+  authUser = { name: data.name, identifier: data.identifier };
+  localStorage.setItem("mausam_token", authToken);
+  localStorage.setItem("mausam_user", JSON.stringify(authUser));
+  authSubmitting = false;
+  pendingIdentifier = null;
+  boot();
 }
 
 function logout() {
@@ -512,6 +608,23 @@ function logout() {
   state.locations = [];
   authMode = "login";
   authError = null;
+  authNotice = null;
+  pendingIdentifier = null;
+  renderAuthScreen();
+}
+
+function forceLogout(reason) {
+  authToken = null;
+  authUser = null;
+  localStorage.removeItem("mausam_token");
+  localStorage.removeItem("mausam_user");
+  state.home = null;
+  state.personas = [];
+  state.locations = [];
+  authMode = "login";
+  authError = reason || null;
+  authNotice = null;
+  pendingIdentifier = null;
   renderAuthScreen();
 }
 
@@ -527,18 +640,12 @@ async function boot() {
     state.bootLoading = false;
     state.error = null;
     render();
-    loadHome();
-  } catch (e){
+    await loadHome();
+  } catch (e) {
     state.bootLoading = false;
-
-    console.error("MAUSAM API ERROR:", e);
-
-    state.error =
-        "Mausam API Error: " +
-        (e?.message || String(e));
-
+    state.error = "Can't reach the Mausam API at " + API_BASE + " — is it running? (See mausam-java-api, port 8080)";
     render();
-   }
+  }
 }
 
 async function loadHome() {
@@ -585,7 +692,7 @@ function setPersona(id) {
 function setHealthCondition(condition) {
   state.healthCondition = condition;
   localStorage.setItem("mausam_health_condition", condition);
-  render();
+  loadHome();
 }
 
 function setFitnessActivity(activity) {
@@ -603,13 +710,25 @@ function toggleLocation() {
   render();
 }
 
-function setLocation(city) {
-  const loc = state.locations.find((l) => l.city === city);
+// Escapes text for safe insertion into innerHTML — applied to any string
+// that originated from user input or an external API (search results,
+// typed queries, backend-provided text) before it's rendered.
+function escapeHtml(str) {
+  if (str == null) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function setLocation(index) {
+  const loc = state.locations[index];
   if (!loc) return;
   state.location = loc;
   state.locationOpen = false;
   state.locationQuery = "";
-   state.home = null; 
   loadHome();
 }
 
@@ -626,7 +745,31 @@ function setLocationQuery(val) {
   }, 250);
 }
 
+// CRASH-FREE NET: render() is called constantly (every state change) and
+// builds the entire UI from scratch each time — a single malformed API
+// field or unexpected null anywhere in that process would otherwise throw
+// an uncaught exception and silently freeze the whole app with no
+// feedback. This wrapper catches that, logs it for debugging, and shows
+// a recoverable message instead of a dead page.
 function render() {
+  try {
+    renderApp();
+  } catch (err) {
+    console.error("Render failed:", err);
+    const app = document.getElementById("app");
+    if (app) {
+      app.innerHTML = `
+        <div style="padding:40px 24px; text-align:center;">
+          <p style="font-size:15px; font-weight:600; margin-bottom:8px;">Something went wrong displaying this screen.</p>
+          <p style="font-size:13px; opacity:0.6; margin-bottom:20px;">This has been logged. Try reloading, or switch persona/city again.</p>
+          <button onclick="location.reload()" style="padding:10px 20px; border-radius:12px; border:none; background:#2F6E68; color:#fff; font-family:inherit; font-size:14px; font-weight:600; cursor:pointer;">Reload</button>
+        </div>
+      `;
+    }
+  }
+}
+
+function renderApp() {
   const app = document.getElementById("app");
 
   if (state.bootLoading) {
@@ -670,8 +813,8 @@ function render() {
             ${icon(s.icon, 14)}
           </div>
           <p class="stat-label">${s.label}</p>
-          <p class="stat-value mono">${s.value}</p>
-          ${s.caption ? `<p class="stat-caption">${s.caption}</p>` : ""}
+          <p class="stat-value mono">${escapeHtml(s.value)}</p>
+          ${s.caption ? `<p class="stat-caption">${escapeHtml(s.caption)}</p>` : ""}
         </div>
       `).join("")
     : `<div style="grid-column: span 2; text-align:center; padding:20px; opacity:0.5; font-size:13px;">${icon("loader", 16)} Loading ${active.label.toLowerCase()} data…</div>`;
@@ -688,11 +831,11 @@ function render() {
 
   const filtered = state.locations;
   const locItems = filtered.length
-    ? filtered.map((l) => `
+    ? filtered.map((l, i) => `
       <button class="loc-item ${state.location && l.city === state.location.city ? "selected" : ""}"
         style="--accent-soft:${active.accentSoft};"
-        onclick="setLocation('${l.city}')">
-        <span><strong>${l.city}</strong><span class="region">, ${l.region}</span></span>
+        onclick="setLocation(${i})">
+        <span><strong>${escapeHtml(l.city)}</strong><span class="region">, ${escapeHtml(l.region)}</span></span>
         ${state.location && l.city === state.location.city ? `<span style="color:${active.accent}">${icon("check", 14)}</span>` : ""}
       </button>
     `).join("")
@@ -708,7 +851,7 @@ function render() {
         <p class="greeting">${getGreeting()}</p>
         <button class="location-btn ${state.locationOpen ? "open" : ""}" onclick="toggleLocation()">
           <span style="color:${active.accent}; display:flex;">${icon("map-pin", 14)}</span>
-          <span>${state.location ? `${state.location.city}, ${state.location.region}` : "Select city"}</span>
+          <span>${state.location ? `${escapeHtml(state.location.city)}, ${escapeHtml(state.location.region)}` : "Select city"}</span>
           <span class="chevron" style="display:flex;">${icon("chevron-down", 14)}</span>
         </button>
 
@@ -716,7 +859,7 @@ function render() {
           <div class="search-wrap">
             ${icon("search", 14)}
             <input id="loc-search" type="text" placeholder="Search city"
-              value="${state.locationQuery}" oninput="setLocationQuery(this.value)" />
+              value="${escapeHtml(state.locationQuery)}" oninput="setLocationQuery(this.value)" />
           </div>
           <div class="loc-list">${locItems}</div>
         </div>
@@ -725,7 +868,7 @@ function render() {
         <span class="display wordmark">Mausam</span>
         ${authUser ? `
           <div style="margin-top:4px; display:flex; align-items:center; justify-content:flex-end; gap:8px;">
-            <span class="auth-user-chip">${authUser.name || authUser.email}</span>
+            <span class="auth-user-chip">${escapeHtml(authUser.name || authUser.identifier)}</span>
             <button class="auth-logout" onclick="logout()">Log out</button>
           </div>
         ` : ""}
@@ -780,9 +923,9 @@ function render() {
       ${metrics ? `
         <div class="insight" style="--accent-soft:${active.accentSoft};">
           <span style="color:${active.accent};">${icon(active.icon, 15)}</span>
-          <p>${metrics.insight}</p>
+          <p>${escapeHtml(metrics.insight)}</p>
         </div>
-        ${metrics.disclaimer ? `<p style="font-size:10.5px; opacity:0.5; margin:6px 4px 0; line-height:1.4;">${metrics.disclaimer}</p>` : ""}
+        ${metrics.disclaimer ? `<p style="font-size:10.5px; opacity:0.5; margin:6px 4px 0; line-height:1.4;">${escapeHtml(metrics.disclaimer)}</p>` : ""}
       ` : ""}
     </div>
 
@@ -811,4 +954,3 @@ if (authToken && authUser) {
 </script>
 </body>
 </html>
-
