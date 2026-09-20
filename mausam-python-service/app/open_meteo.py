@@ -56,24 +56,42 @@ class OpenMeteoError(Exception):
 
 
 def _get_json(url: str, params: dict, what: str) -> dict:
-    """Shared GET-and-parse helper with one automatic retry.
-
-    RELIABILITY: this network has shown intermittent failures reaching
-    Open-Meteo (transient connection resets / blips, not a hard block) —
-    a single retry after a brief pause turns a good number of those into
-    successes instead of an immediate failed request.
-    """
+    """GET JSON with limited retry/backoff."""
     last_error = None
-    for attempt in range(2):  # first try + one retry
+
+    for attempt in range(2):
         try:
-            resp = requests.get(url, params=params, timeout=TIMEOUT_SECONDS)
+            resp = requests.get(
+                url,
+                params=params,
+                timeout=TIMEOUT_SECONDS
+            )
+
+            if resp.status_code == 429:
+                if attempt == 0:
+                    time.sleep(5)
+                    continue
+
+                raise OpenMeteoError(
+                    f"{what} was rate limited by Open-Meteo (HTTP 429). "
+                    f"Please try again shortly."
+                )
+
             resp.raise_for_status()
             return resp.json()
+
+        except OpenMeteoError:
+            raise
+
         except requests.RequestException as exc:
             last_error = exc
+
             if attempt == 0:
-                time.sleep(RETRY_DELAY_SECONDS)
-    raise OpenMeteoError(f"{what} failed after retry: {last_error}") from last_error
+                time.sleep(1)
+
+    raise OpenMeteoError(
+        f"{what} failed after retry: {last_error}"
+    ) from last_error
 
 
 # WMO weather codes -> human-readable condition (per Open-Meteo's table)
