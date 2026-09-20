@@ -38,7 +38,7 @@ _geocode_cache: dict = {}
 # successful results are ever cached — a failure is never remembered,
 # so the next call always retries for real.
 _fetch_cache: dict = {}
-CACHE_TTL_SECONDS = 900
+CACHE_TTL_SECONDS = 3600
 
 
 def _cached_fetch(cache_key, fetch_fn):
@@ -56,44 +56,31 @@ class OpenMeteoError(Exception):
 
 
 def _get_json(url: str, params: dict, what: str) -> dict:
-    """GET JSON with limited retry/backoff."""
+    """GET JSON. Do not repeatedly retry rate-limited requests."""
 
-    last_error = None
+    try:
+        resp = requests.get(
+            url,
+            params=params,
+            timeout=TIMEOUT_SECONDS
+        )
 
-    for attempt in range(2):
-        try:
-            resp = requests.get(
-                url,
-                params=params,
-                timeout=TIMEOUT_SECONDS
+        if resp.status_code == 429:
+            raise OpenMeteoError(
+                f"{what} was rate limited by Open-Meteo (HTTP 429). "
+                "Please try again later."
             )
 
-            if resp.status_code == 429:
-                if attempt == 0:
-                    time.sleep(10)
-                    continue
+        resp.raise_for_status()
+        return resp.json()
 
-                raise OpenMeteoError(
-                    f"{what} was rate limited by Open-Meteo (HTTP 429). "
-                    "Please try again shortly."
-                )
+    except OpenMeteoError:
+        raise
 
-            resp.raise_for_status()
-            return resp.json()
-
-        except OpenMeteoError:
-            raise
-
-        except requests.RequestException as exc:
-            last_error = exc
-
-            if attempt == 0:
-                time.sleep(2)
-
-    raise OpenMeteoError(
-        f"{what} failed after retry: {last_error}"
-    ) from last_error
-
+    except requests.RequestException as exc:
+        raise OpenMeteoError(
+            f"{what} failed: {exc}"
+        ) from exc
 
 # WMO weather codes -> human-readable condition (per Open-Meteo's table)
 _WEATHER_CODE_MAP = {
