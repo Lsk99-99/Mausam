@@ -585,13 +585,13 @@ function setPersona(id) {
 function setHealthCondition(condition) {
   state.healthCondition = condition;
   localStorage.setItem("mausam_health_condition", condition);
-  loadHome();
+  render();
 }
 
 function setFitnessActivity(activity) {
   state.fitnessActivity = activity;
   localStorage.setItem("mausam_fitness_activity", activity);
-  loadHome();
+  render();
 }
 
 function toggleLocation() {
