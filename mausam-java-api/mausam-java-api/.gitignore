@@ -1,0 +1,96 @@
+# ==========================================
+
+# MAUSAM - ROOT GITIGNORE
+
+# ==========================================
+
+# ---------- Python / FastAPI ----------
+
+**pycache**/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+
+# Python virtual environments
+
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Python build/package files
+
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ---------- Environment Variables / Secrets ----------
+
+.env
+.env.*
+!.env.example
+
+# ---------- Java / Spring Boot / Maven ----------
+
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# ---------- Local H2 Database ----------
+
+*.mv.db
+*.lock.db
+*.trace.db
+
+# ---------- Node.js ----------
+
+node_modules/
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- React Native / Expo ----------
+
+.expo/
+.expo-shared/
+web-build/
+
+# ---------- Build / Cache ----------
+
+.cache/
+coverage/
+
+# ---------- IDE ----------
+
+.vscode/
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# ---------- Operating System ----------
+
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ---------- Logs ----------
+
+*.log
+logs/
+
+# ---------- Temporary Files ----------
+
+*.tmp
+*.temp
+*.swp
+*.swo
+*~

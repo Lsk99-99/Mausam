@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mausam</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Manrope:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #EEF1EC;
+    --ink: #1B2A2E;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Manrope', sans-serif;
+    display: flex;
+    justify-content: center;
+  }
+  .app {
+    width: 100%;
+    max-width: 384px;
+    min-height: 100vh;
+    padding-bottom: 40px;
+    position: relative;
+  }
+  .display { font-family: 'Fraunces', serif; }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  @keyframes focusIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .panel { animation: focusIn 0.32s ease; }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 24px 20px 8px;
+    position: relative;
+  }
+  .greeting { font-size: 12px; letter-spacing: 0.02em; opacity: 0.6; margin: 0; }
+  .location-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 2px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+    color: inherit;
+  }
+  .location-btn span { font-size: 14px; font-weight: 600; }
+  .location-btn svg.chevron { transition: transform 0.2s ease; opacity: 0.5; }
+  .location-btn.open svg.chevron { transform: rotate(180deg); }
+  .wordmark { font-size: 18px; letter-spacing: 0.02em; }
+
+  /* Location dropdown */
+  .location-dropdown {
+    position: absolute;
+    left: 20px;
+    top: 56px;
+    z-index: 20;
+    width: 240px;
+    background: #fff;
+    border-radius: 16px;
+    padding: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    display: none;
+  }
+  .location-dropdown.show { display: block; }
+  .search-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    border-radius: 12px;
+    background: #F2F1EC;
+  }
+  .search-wrap svg { opacity: 0.45; flex-shrink: 0; }
+  .search-wrap input {
+    width: 100%;
+    border: none;
+    background: transparent;
+    font-size: 14px;
+    outline: none;
+    font-family: inherit;
+    color: inherit;
+  }
+  .search-wrap input::placeholder { opacity: 0.45; }
+  .loc-list { max-height: 210px; overflow-y: auto; }
+  .loc-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-radius: 12px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    font-size: 14px;
+    color: inherit;
+  }
+  .loc-item .region { opacity: 0.55; }
+  .loc-item.selected { background: var(--accent-soft); }
+  .loc-empty { font-size: 12px; opacity: 0.5; padding: 12px; margin: 0; }
+
+  /* Persona chips */
+  .chips {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 12px 20px;
+  }
+  .chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: none;
+    white-space: nowrap;
+    flex-shrink: 0;
+    cursor: pointer;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    color: #4A5654;
+    font-family: inherit;
+    transition: all 0.2s ease;
+  }
+  .chip span { font-size: 12px; font-weight: 600; }
+  .chip.active { color: #fff; box-shadow: none; }
+
+  /* Hero */
+  .hero {
+    margin: 4px 20px 0;
+    border-radius: 24px;
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+    color: #fff;
+    transition: background 0.3s ease;
+  }
+  .ring {
+    position: absolute;
+    right: -24px;
+    top: -24px;
+    width: 144px;
+    height: 144px;
+    opacity: 0.9;
+  }
+  .ring-wrap { position: relative; width: 100%; height: 100%; }
+  .tick {
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.28);
+    transform: translate(-50%, -50%) scale(1);
+    transition: all 0.3s ease;
+  }
+  .tick.active { background: #fff; transform: translate(-50%, -50%) scale(1.9); }
+  .hero-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; opacity: 0.75; margin: 0; }
+  .hero-temp-row { display: flex; align-items: flex-end; gap: 12px; margin-top: 4px; }
+  .hero-temp { font-size: 60px; line-height: 1; }
+  .hero-cond { font-size: 14px; font-weight: 600; margin: 0; }
+  .hero-feels { font-size: 12px; opacity: 0.75; margin: 2px 0 0; }
+  .hero-lens { display: flex; align-items: center; gap: 6px; font-size: 12px; opacity: 0.9; margin-top: 16px; }
+  .live-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 999px;
+    background: rgba(255,255,255,0.18); color: #fff; margin-top: 8px;
+  }
+
+  /* Persona content */
+  .content { padding: 20px 20px 0; }
+  .section-label {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.5;
+    margin: 0 0 8px;
+  }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .stat-card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .stat-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 8px;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .stat-label { font-size: 11px; opacity: 0.55; line-height: 1.2; margin: 0; }
+  .stat-value { font-size: 16px; font-weight: 600; line-height: 1.2; margin: 2px 0 0; }
+  .stat-caption { font-size: 11px; opacity: 0.55; margin: 2px 0 0; }
+
+  .insight {
+    margin-top: 12px;
+    border-radius: 16px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    background: var(--accent-soft);
+  }
+  .insight svg { color: var(--accent); margin-top: 2px; flex-shrink: 0; }
+  .insight p { font-size: 13px; line-height: 1.35; margin: 0; color: #2A3533; }
+
+  /* Hourly */
+  .hourly-strip {
+    display: flex;
+    justify-content: space-between;
+    background: #fff;
+    border-radius: 16px;
+    padding: 16px 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .hour-item { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .hour-item .h-time { font-size: 11px; opacity: 0.55; }
+  .hour-item svg { color: var(--accent); }
+  .hour-item .h-temp { font-size: 12px; font-weight: 600; }
+
+  .footer-btn {
+    margin: 20px 20px 0;
+    width: calc(100% - 40px);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-radius: 16px;
+    padding: 12px 16px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    color: inherit;
+  }
+  .footer-btn span { font-size: 14px; font-weight: 600; }
+  .footer-btn svg { opacity: 0.5; }
+
+  /* ===== Auth screen ===== */
+  .auth-wrap {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 24px 20px;
+  }
+  .auth-card {
+    width: 100%; max-width: 340px; background: #fff; border-radius: 20px;
+    padding: 28px 24px; box-shadow: 0 8px 28px rgba(0,0,0,0.12);
+  }
+  .auth-title { font-size: 20px; margin: 0 0 4px; text-align: center; }
+  .auth-subtitle { font-size: 13px; opacity: 0.6; text-align: center; margin: 0 0 20px; }
+  .auth-field { margin-bottom: 12px; }
+  .auth-field label { font-size: 12px; font-weight: 600; opacity: 0.7; display: block; margin-bottom: 4px; }
+  .auth-field input {
+    width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #DDD;
+    font-family: inherit; font-size: 14px; outline: none; box-sizing: border-box;
+  }
+  .auth-field input:focus { border-color: #2F6E68; }
+  .auth-error {
+    background: #FBE4DE; color: #8A2E17; font-size: 12px; padding: 8px 12px;
+    border-radius: 10px; margin-bottom: 12px; line-height: 1.4;
+  }
+  .auth-btn {
+    width: 100%; padding: 11px; border: none; border-radius: 12px;
+    background: #2F6E68; color: #fff; font-family: inherit; font-size: 14px;
+    font-weight: 600; cursor: pointer; margin-top: 4px;
+  }
+  .auth-btn:disabled { opacity: 0.6; cursor: default; }
+  .auth-toggle { text-align: center; font-size: 13px; margin-top: 16px; opacity: 0.75; }
+  .auth-toggle button {
+    background: none; border: none; color: #2F6E68; font-weight: 600;
+    font-family: inherit; font-size: 13px; cursor: pointer; padding: 0;
+  }
+  .auth-header-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; margin-top: 2px;
+  }
+  .auth-user-chip { font-size: 11px; opacity: 0.6; }
+  .auth-logout {
+    background: none; border: none; font-family: inherit; font-size: 11px;
+    color: #B5502F; cursor: pointer; padding: 0; font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+
+<script>
+const API_BASE = "http://localhost:8080";
+
+/* Minimal inline icon set (lucide-style strokes) so this file has zero external JS deps */
+const ICONS = {
+  "map-pin": '<path d="M12 21s7-6.5 7-11a7 7 0 1 0-14 0c0 4.5 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+  "chevron-down": '<polyline points="6 9 12 15 18 9"/>',
+  "search": '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  "check": '<polyline points="20 6 9 17 4 12"/>',
+  "chevron-right": '<polyline points="9 18 15 12 9 6"/>',
+  "gauge": '<path d="M12 14 15.5 9"/><circle cx="12" cy="14" r="1"/><path d="M4.6 19a9 9 0 1 1 14.8 0"/>',
+  "sprout": '<path d="M7 20h10"/><path d="M12 20v-8"/><path d="M12 12S6 12 6 6c6 0 6 6 6 6z"/><path d="M12 8s0-5 5-5c0 4-2.5 5-5 5z"/>',
+  "sun": '<circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.9" y1="4.9" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.1" y2="19.1"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.9" y1="19.1" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.1" y2="4.9"/>',
+  "droplets": '<path d="M12 2s5 6.5 5 10a5 5 0 0 1-10 0c0-3.5 5-10 5-10z"/>',
+  "sunrise": '<path d="M12 2v5"/><path d="m4.2 10.2 1.4 1.4"/><path d="M2 18h2"/><path d="M20 18h2"/><path d="m19.8 11.6 1.4-1.4"/><path d="M22 22H2"/><path d="m8 6 4-4 4 4"/><path d="M16 18a4 4 0 0 0-8 0"/>',
+  "sunset": '<path d="M12 10V4"/><path d="m4.2 12.2 1.4 1.4"/><path d="M2 18h2"/><path d="M20 18h2"/><path d="m19.8 13.6 1.4-1.4"/><path d="M22 22H2"/><path d="m16 6-4 4-4-4"/><path d="M16 18a4 4 0 0 0-8 0"/>',
+  "thermometer": '<path d="M14 4v10.5a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0z"/>',
+  "wind": '<path d="M9.6 4.6A2 2 0 1 1 11 8H2"/><path d="M12.6 19.4A2 2 0 1 0 14 16H2"/><path d="M17.7 8a2.5 2.5 0 1 1 1.8 4.2H2"/>',
+  "waves": '<path d="M2 6c1.5 1.5 3 1.5 4.5 0S9 4.5 10.5 6s3 1.5 4.5 0 3-1.5 4.5 0 3 1.5 4.5 0"/><path d="M2 12c1.5 1.5 3 1.5 4.5 0s3-1.5 4.5 0 3 1.5 4.5 0 3-1.5 4.5 0 3 1.5 4.5 0"/><path d="M2 18c1.5 1.5 3 1.5 4.5 0s3-1.5 4.5 0 3 1.5 4.5 0 3-1.5 4.5 0 3 1.5 4.5 0"/>',
+  "plane": '<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-1 .1-1.3.5l-.6.8c-.3.5-.2 1.1.3 1.4L9 12l-2 3H4l-1 1.5 3.5 1 1 3.5L9 20v-3l3-2 3.6 5.7c.3.5.9.6 1.4.3l.8-.6c.4-.3.6-.8.5-1.3z"/>',
+  "cloud-sun": '<path d="M12 2v2"/><path d="m4.9 4.9 1.4 1.4"/><path d="M2 12h2"/><path d="M9 7a5 5 0 0 1 4.9 6"/><path d="M17 18H9a4 4 0 1 1 1.2-7.8"/>',
+  "alert-triangle": '<path d="m10.3 3.6-8 14A2 2 0 0 0 4 20.7h16a2 2 0 0 0 1.7-3.1l-8-14a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  "users": '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/>',
+  "eye": '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/>',
+  "umbrella": '<path d="M22 12A10 10 0 0 0 2 12z"/><path d="M12 12v8a2 2 0 0 0 4 0"/><path d="M12 2v2"/>',
+  "car": '<path d="M5 17h14M5 17a2 2 0 1 0 0 .01M19 17a2 2 0 1 0 0 .01M5 17l1.5-5.5A2 2 0 0 1 8.4 10h7.2a2 2 0 0 1 1.9 1.5L19 17M3 17v-2a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v2"/>',
+  "calendar-heart": '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M12 17.5s-2.5-1.6-2.5-3.3a1.6 1.6 0 0 1 2.5-1.3 1.6 1.6 0 0 1 2.5 1.3c0 1.7-2.5 3.3-2.5 3.3z"/>',
+  "heart-pulse": '<path d="M19 14c1.5-1.5 3-3.4 3-5.5A5.5 5.5 0 0 0 12 5a5.5 5.5 0 0 0-10 3.5c0 5 7 11 10 12.5 1.4-.7 3.5-2.2 5.5-4.2"/><path d="M3.5 12h2l2-4 3 8 2-5h4.5"/>',
+  "footprints": '<path d="M4 16v-2.4a3.6 3.6 0 0 1 7.2 0V16"/><path d="M12.8 21v-2.4a3.6 3.6 0 0 1 7.2 0V21"/><circle cx="7.6" cy="9.5" r="1.2"/><circle cx="16.4" cy="14.5" r="1.2"/>',
+  "loader": '<line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.9" y1="4.9" x2="7.8" y2="7.8"/><line x1="16.2" y1="16.2" x2="19.1" y2="19.1"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.9" y1="19.1" x2="7.8" y2="16.2"/><line x1="16.2" y1="7.8" x2="19.1" y2="4.9"/>',
+};
+
+function icon(name, size = 14, extraAttrs = "") {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ${extraAttrs}>${ICONS[name] || ""}</svg>`;
+}
+
+const HEALTH_CONDITIONS = [
+  { id: "general", label: "General" },
+  { id: "asthma", label: "Asthma" },
+  { id: "allergies", label: "Allergies" },
+  { id: "cardiovascular", label: "Heart" },
+  { id: "skin", label: "Skin/Sun" },
+  { id: "migraine", label: "Migraine" },
+  { id: "joint", label: "Joint Pain" },
+];
+
+const FITNESS_ACTIVITIES = [
+  { id: "general", label: "General" },
+  { id: "running", label: "Running" },
+  { id: "cycling", label: "Cycling" },
+  { id: "gym", label: "Gym" },
+  { id: "team_sports", label: "Team Sports" },
+  { id: "yoga", label: "Yoga" },
+  { id: "hiking", label: "Hiking" },
+];
+
+/* Weather condition text (from the API) -> best-fit icon we already have */
+function conditionIcon(condition) {
+  const c = (condition || "").toLowerCase();
+  if (c.includes("clear") || c.includes("sun")) return "sun";
+  if (c.includes("thunder") || c.includes("storm")) return "alert-triangle";
+  if (c.includes("rain") || c.includes("drizzle") || c.includes("shower")) return "droplets";
+  return "cloud-sun";
+}
+
+async function fetchJSON(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  if (!res.ok) {
+    let msg = `${path} → HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.message) msg = body.message;
+    } catch (e) { /* response wasn't JSON — keep default message */ }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+let authToken = localStorage.getItem("mausam_token");
+let authUser = JSON.parse(localStorage.getItem("mausam_user") || "null");
+let authMode = "login"; // "login" | "signup"
+let authError = null;
+let authSubmitting = false;
+
+let state = {
+  personas: [],
+  locations: [],
+  activeId: "health",
+  healthCondition: localStorage.getItem("mausam_health_condition") || "general",
+  fitnessActivity: localStorage.getItem("mausam_fitness_activity") || "general",
+  location: null,
+  locationOpen: false,
+  locationQuery: "",
+  home: null,          // { currentWeather, hourly, personaMetrics }
+  homeLoading: false,
+  bootLoading: true,
+  error: null,
+};
+
+let searchDebounce = null;
+
+function getGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+/* ===== Auth screen ===== */
+function renderAuthScreen() {
+  const isSignup = authMode === "signup";
+  document.getElementById("app").innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <p class="display auth-title">Mausam</p>
+        <p class="auth-subtitle">${isSignup ? "Create an account to get started" : "Log in to continue"}</p>
+
+        ${authError ? `<div class="auth-error">${authError}</div>` : ""}
+
+        <form id="auth-form">
+          ${isSignup ? `
+            <div class="auth-field">
+              <label>Name</label>
+              <input id="auth-name" type="text" autocomplete="name" required />
+            </div>
+          ` : ""}
+          <div class="auth-field">
+            <label>Email</label>
+            <input id="auth-email" type="email" autocomplete="email" required />
+          </div>
+          <div class="auth-field">
+            <label>Password</label>
+            <input id="auth-password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" minlength="6" required />
+          </div>
+          <button type="submit" class="auth-btn" ${authSubmitting ? "disabled" : ""}>
+            ${authSubmitting ? "Please wait…" : (isSignup ? "Sign Up" : "Log In")}
+          </button>
+        </form>
+
+        <div class="auth-toggle">
+          ${isSignup ? "Already have an account?" : "New to Mausam?"}
+          <button type="button" onclick="switchAuthMode()">${isSignup ? "Log In" : "Sign Up"}</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById("auth-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitAuth();
+  });
+}
+
+function switchAuthMode() {
+  authMode = authMode === "signup" ? "login" : "signup";
+  authError = null;
+  renderAuthScreen();
+}
+
+async function submitAuth() {
+  const email = document.getElementById("auth-email").value.trim();
+  const password = document.getElementById("auth-password").value;
+  const name = authMode === "signup" ? document.getElementById("auth-name").value.trim() : undefined;
+
+  authSubmitting = true;
+  authError = null;
+  renderAuthScreen();
+
+  try {
+    const path = authMode === "signup" ? "/api/auth/signup" : "/api/auth/login";
+    const body = authMode === "signup" ? { name, email, password } : { email, password };
+    const data = await fetchJSON(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    authToken = data.token;
+    authUser = { name: data.name, email: data.email };
+    localStorage.setItem("mausam_token", authToken);
+    localStorage.setItem("mausam_user", JSON.stringify(authUser));
+    authSubmitting = false;
+    boot();
+  } catch (e) {
+    authSubmitting = false;
+    authError = e.message || "Something went wrong — please try again.";
+    renderAuthScreen();
+  }
+}
+
+function logout() {
+  authToken = null;
+  authUser = null;
+  localStorage.removeItem("mausam_token");
+  localStorage.removeItem("mausam_user");
+  state.home = null;
+  state.personas = [];
+  state.locations = [];
+  authMode = "login";
+  authError = null;
+  renderAuthScreen();
+}
+
+async function boot() {
+  try {
+    const [personas, locations] = await Promise.all([
+      fetchJSON("/api/personas"),
+      fetchJSON("/api/locations"),
+    ]);
+    state.personas = personas;
+    state.locations = locations;
+    state.location = locations.find((l) => l.city === "Mumbai") || locations[0];
+    state.bootLoading = false;
+    state.error = null;
+    render();
+    await loadHome();
+  } catch (e) {
+    state.bootLoading = false;
+    state.error = "Can't reach the Mausam API at " + API_BASE + " — is it running? (See mausam-java-api, port 8080)";
+    render();
+  }
+}
+
+async function loadHome() {
+  if (!state.location) return;
+  state.homeLoading = true;
+  state.error = null;
+  // Clear the previous persona's stats right away so the UI shows a
+  // loading state instead of stale AQI/pollen/etc. from the old persona
+  // while the new fetch is in flight.
+  if (state.home) {
+    state.home = { ...state.home, personaMetrics: null };
+  }
+  render();
+  try {
+    let url = `/api/home?city=${encodeURIComponent(state.location.city)}&persona=${state.activeId}`;
+    if (state.activeId === "health") {
+      url += `&condition=${encodeURIComponent(state.healthCondition)}`;
+    }
+    if (state.activeId === "fitness") {
+      url += `&activity=${encodeURIComponent(state.fitnessActivity)}`;
+    }
+    // Pass through coordinates already resolved by location search —
+    // avoids a second, less reliable re-geocode by name alone, which
+    // matters most for villages/small towns (more prone to name
+    // collisions or sparse data than major cities).
+    if (state.location.latitude != null && state.location.longitude != null) {
+      url += `&lat=${state.location.latitude}&lon=${state.location.longitude}`;
+    }
+    const data = await fetchJSON(url);
+    state.home = data;
+    state.homeLoading = false;
+  } catch (e) {
+    state.homeLoading = false;
+    state.error = e.message || "Couldn't load weather data — check that both backend services are running.";
+  }
+  render();
+}
+
+function setPersona(id) {
+  state.activeId = id;
+  loadHome();
+}
+
+function setHealthCondition(condition) {
+  state.healthCondition = condition;
+  localStorage.setItem("mausam_health_condition", condition);
+  loadHome();
+}
+
+function setFitnessActivity(activity) {
+  state.fitnessActivity = activity;
+  localStorage.setItem("mausam_fitness_activity", activity);
+  loadHome();
+}
+
+function toggleLocation() {
+  state.locationOpen = !state.locationOpen;
+  if (state.locationOpen) {
+    state.locationQuery = "";
+    fetchJSON("/api/locations").then((locs) => { state.locations = locs; render(); }).catch(() => {});
+  }
+  render();
+}
+
+function setLocation(city) {
+  const loc = state.locations.find((l) => l.city === city);
+  if (!loc) return;
+  state.location = loc;
+  state.locationOpen = false;
+  state.locationQuery = "";
+   state.home = null; 
+  loadHome();
+}
+
+function setLocationQuery(val) {
+  state.locationQuery = val;
+  render();
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(async () => {
+    try {
+      const locs = await fetchJSON(`/api/locations?q=${encodeURIComponent(val)}`);
+      state.locations = locs;
+      render();
+    } catch (e) { /* keep showing last known list */ }
+  }, 250);
+}
+
+function render() {
+  const app = document.getElementById("app");
+
+  if (state.bootLoading) {
+    app.innerHTML = `<div style="padding:40px 20px; text-align:center; opacity:0.6; font-size:14px;">Loading Mausam…</div>`;
+    return;
+  }
+
+  const personas = state.personas;
+  const active = personas.find((p) => p.id === state.activeId) || personas[0];
+  if (!active) {
+    app.innerHTML = `<div style="padding:40px 20px; text-align:center; font-size:14px;">${state.error || "No personas available."}</div>`;
+    return;
+  }
+
+  const cw = state.home?.currentWeather;
+  const hourly = state.home?.hourly?.hours || [];
+  const metrics = state.home?.personaMetrics;
+
+  const ticks = personas.map((p, i) => {
+    const angle = (i / personas.length) * 360 - 90;
+    const rad = (angle * Math.PI) / 180;
+    const r = 44;
+    const x = 50 + r * Math.cos(rad);
+    const y = 50 + r * Math.sin(rad);
+    return `<div class="tick ${p.id === state.activeId ? "active" : ""}" style="left:${x}%; top:${y}%;"></div>`;
+  }).join("");
+
+  const chips = personas.map((p) => `
+    <button class="chip ${p.id === state.activeId ? "active" : ""}"
+      style="${p.id === state.activeId ? `background:${p.accent};` : ""}"
+      onclick="setPersona('${p.id}')">
+      ${icon(p.icon, 14)}
+      <span>${p.label}</span>
+    </button>
+  `).join("");
+
+  const statsHtml = metrics
+    ? metrics.stats.map((s) => `
+        <div class="stat-card">
+          <div class="stat-icon" style="--accent-soft:${active.accentSoft}; --accent:${active.accent};">
+            ${icon(s.icon, 14)}
+          </div>
+          <p class="stat-label">${s.label}</p>
+          <p class="stat-value mono">${s.value}</p>
+          ${s.caption ? `<p class="stat-caption">${s.caption}</p>` : ""}
+        </div>
+      `).join("")
+    : `<div style="grid-column: span 2; text-align:center; padding:20px; opacity:0.5; font-size:13px;">${icon("loader", 16)} Loading ${active.label.toLowerCase()} data…</div>`;
+
+  const hoursHtml = hourly.length
+    ? hourly.map((h) => `
+        <div class="hour-item">
+          <span class="h-time">${h.label}</span>
+          <span style="color:${active.accent};">${icon(conditionIcon(h.condition), 16)}</span>
+          <span class="h-temp mono">${Math.round(h.temp_c)}°</span>
+        </div>
+      `).join("")
+    : `<div style="width:100%; text-align:center; padding:8px; opacity:0.5; font-size:12px;">Loading…</div>`;
+
+  const filtered = state.locations;
+  const locItems = filtered.length
+    ? filtered.map((l) => `
+      <button class="loc-item ${state.location && l.city === state.location.city ? "selected" : ""}"
+        style="--accent-soft:${active.accentSoft};"
+        onclick="setLocation('${l.city}')">
+        <span><strong>${l.city}</strong><span class="region">, ${l.region}</span></span>
+        ${state.location && l.city === state.location.city ? `<span style="color:${active.accent}">${icon("check", 14)}</span>` : ""}
+      </button>
+    `).join("")
+    : `<p class="loc-empty">No cities found</p>`;
+
+  const errorBanner = state.error
+    ? `<div style="margin:8px 20px 0; padding:10px 14px; border-radius:12px; background:#FBE4DE; color:#8A2E17; font-size:12px; line-height:1.4;">${state.error}</div>`
+    : "";
+
+  app.innerHTML = `
+    <div class="header">
+      <div>
+        <p class="greeting">${getGreeting()}</p>
+        <button class="location-btn ${state.locationOpen ? "open" : ""}" onclick="toggleLocation()">
+          <span style="color:${active.accent}; display:flex;">${icon("map-pin", 14)}</span>
+          <span>${state.location ? `${state.location.city}, ${state.location.region}` : "Select city"}</span>
+          <span class="chevron" style="display:flex;">${icon("chevron-down", 14)}</span>
+        </button>
+
+        <div class="location-dropdown ${state.locationOpen ? "show" : ""}">
+          <div class="search-wrap">
+            ${icon("search", 14)}
+            <input id="loc-search" type="text" placeholder="Search city"
+              value="${state.locationQuery}" oninput="setLocationQuery(this.value)" />
+          </div>
+          <div class="loc-list">${locItems}</div>
+        </div>
+      </div>
+      <div style="text-align:right;">
+        <span class="display wordmark">Mausam</span>
+        ${authUser ? `
+          <div style="margin-top:4px; display:flex; align-items:center; justify-content:flex-end; gap:8px;">
+            <span class="auth-user-chip">${authUser.name || authUser.email}</span>
+            <button class="auth-logout" onclick="logout()">Log out</button>
+          </div>
+        ` : ""}
+      </div>
+    </div>
+
+    ${errorBanner}
+
+    <div class="chips no-scrollbar">${chips}</div>
+
+    ${active.id === "health" ? `
+      <div class="chips no-scrollbar" style="padding-top:0;">
+        ${HEALTH_CONDITIONS.map((c) => `
+          <button class="chip ${state.healthCondition === c.id ? "active" : ""}"
+            style="${state.healthCondition === c.id ? `background:${active.accent};` : ""} font-size:11px;"
+            onclick="setHealthCondition('${c.id}')">
+            <span>${c.label}</span>
+          </button>
+        `).join("")}
+      </div>
+    ` : ""}
+
+    ${active.id === "fitness" ? `
+      <div class="chips no-scrollbar" style="padding-top:0;">
+        ${FITNESS_ACTIVITIES.map((a) => `
+          <button class="chip ${state.fitnessActivity === a.id ? "active" : ""}"
+            style="${state.fitnessActivity === a.id ? `background:${active.accent};` : ""} font-size:11px;"
+            onclick="setFitnessActivity('${a.id}')">
+            <span>${a.label}</span>
+          </button>
+        `).join("")}
+      </div>
+    ` : ""}
+
+    <div class="hero" style="background: linear-gradient(160deg, ${active.accent} 0%, #223347 100%);">
+      <div class="ring"><div class="ring-wrap">${ticks}</div></div>
+      <p class="hero-label">Right now</p>
+      <div class="hero-temp-row">
+        <span class="display hero-temp">${cw ? Math.round(cw.temp_c) + "°" : "—"}</span>
+        <div>
+          <p class="hero-cond">${cw ? cw.condition : (state.homeLoading ? "Loading…" : "—")}</p>
+          <p class="hero-feels mono">${cw ? `feels like ${Math.round(cw.feels_like_c)}°` : ""}</p>
+        </div>
+      </div>
+      <div class="hero-lens">${icon(active.icon, 14)} <span>Viewing through your ${active.label} lens</span></div>
+      ${cw && !cw.is_live ? `<div class="live-badge">${icon("alert-triangle", 11)} Estimated data — live weather unavailable</div>` : ""}
+    </div>
+
+    <div class="content panel" key="${active.id}">
+      <p class="section-label">${active.label} outlook</p>
+      <div class="stat-grid">${statsHtml}</div>
+      ${metrics ? `
+        <div class="insight" style="--accent-soft:${active.accentSoft};">
+          <span style="color:${active.accent};">${icon(active.icon, 15)}</span>
+          <p>${metrics.insight}</p>
+        </div>
+        ${metrics.disclaimer ? `<p style="font-size:10.5px; opacity:0.5; margin:6px 4px 0; line-height:1.4;">${metrics.disclaimer}</p>` : ""}
+      ` : ""}
+    </div>
+
+    <div class="content">
+      <p class="section-label">Next few hours</p>
+      <div class="hourly-strip">${hoursHtml}</div>
+    </div>
+
+    <button class="footer-btn">
+      <span>See full 7-day forecast</span>
+      ${icon("chevron-right", 16)}
+    </button>
+  `;
+
+  if (state.locationOpen) {
+    const input = document.getElementById("loc-search");
+    if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+  }
+}
+
+if (authToken && authUser) {
+  boot();
+} else {
+  renderAuthScreen();
+}
+</script>
+</body>
+</html>
+
