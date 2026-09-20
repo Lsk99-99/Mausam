@@ -474,8 +474,8 @@ function renderAuthScreen() {
               </div>
             ` : ""}
             <div class="auth-field">
-              <label>Email or phone number</label>
-              <input id="auth-identifier" type="text" autocomplete="username" placeholder="you@example.com or +91XXXXXXXXXX" required />
+              <label>Email</label>
+              <input id="auth-identifier" type="email" autocomplete="username" placeholder="you@example.com" required />
             </div>
             <div class="auth-field">
               <label>Password</label>
@@ -526,22 +526,17 @@ async function submitAuth() {
 
   try {
     if (authMode === "signup") {
-      // Step 1 of 2: request a verification code, don't log in yet.
-      await fetchJSON("/api/auth/signup/start", {
+      const data = await fetchJSON("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, identifier, password }),
+        body: JSON.stringify({ name, email: identifier, password }),
       });
-      pendingIdentifier = identifier;
-      authMode = "verify";
-      authSubmitting = false;
-      authNotice = "Code sent — check your email/phone (or the server console if no email service is configured).";
-      renderAuthScreen();
+      completeAuth(data);
     } else {
       const data = await fetchJSON("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier, password }),
+        body: JSON.stringify({ email: identifier, password }),
       });
       completeAuth(data);
     }
