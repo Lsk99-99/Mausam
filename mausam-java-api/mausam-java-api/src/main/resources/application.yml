@@ -3,10 +3,10 @@ server:
 
 mausam:
   python-service:
-    base-url: http://localhost:8000
+     base-url: https://mausam-python-service.onrender.com
   jwt:
     # Dev-only secret — replace with a real secret (env var) before deploying anywhere real.
-    secret: mausam-dev-jwt-secret-change-this-before-deploying-32chars-min
+    secret: ${MAUSAM_JWT_SECRET}
     expiry-hours: 24
 
 spring:
