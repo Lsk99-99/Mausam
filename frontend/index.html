@@ -659,7 +659,6 @@ async function loadHome() {
 
   const requestId = ++homeRequestId;
 
-  // Freeze the selected location for this request.
   const selectedLocation = state.location;
   const city = selectedLocation.city;
   const lat = selectedLocation.latitude;
@@ -668,7 +667,6 @@ async function loadHome() {
   state.homeLoading = true;
   state.error = null;
 
-  // A location change is a full reload, so clear the old persona metrics.
   if (state.home) {
     state.home = { ...state.home, personaMetrics: null };
   }
@@ -676,42 +674,89 @@ async function loadHome() {
   render();
 
   try {
-    // Preload ALL main personas in parallel for this location.
-    const requests = state.personas.map(async (persona) => {
-      let url =
-        `/api/home?city=${encodeURIComponent(city)}` +
-        `&persona=${encodeURIComponent(persona.id)}`;
+    const requests = [];
 
-      if (persona.id === "health") {
-        url += `&condition=${encodeURIComponent(state.healthCondition)}`;
-      }
-
-      if (persona.id === "fitness") {
-        url += `&activity=${encodeURIComponent(state.fitnessActivity)}`;
-      }
-
-      if (lat != null && lon != null) {
-        url +=
-          `&lat=${encodeURIComponent(lat)}` +
-          `&lon=${encodeURIComponent(lon)}`;
-      }
-
-      const data = await fetchJSON(url);
-      return { personaId: persona.id, data };
+    // Preload every main persona.
+    state.personas.forEach((persona) => {
+      requests.push({
+        cacheKey: `${city}|${lat}|${lon}|${persona.id}`,
+        personaId: persona.id,
+        condition: persona.id === "health" ? state.healthCondition : null,
+        activity: persona.id === "fitness" ? state.fitnessActivity : null
+      });
     });
 
-    const results = await Promise.all(requests);
+    // Preload every Health sub-lens.
+    HEALTH_CONDITIONS.forEach((condition) => {
+      requests.push({
+        cacheKey: `${city}|${lat}|${lon}|health|condition|${condition.id}`,
+        personaId: "health",
+        condition: condition.id,
+        activity: null
+      });
+    });
 
-    // Ignore an old location load if a newer location was selected.
+    // Preload every Fitness sub-lens.
+    FITNESS_ACTIVITIES.forEach((activity) => {
+      requests.push({
+        cacheKey: `${city}|${lat}|${lon}|fitness|activity|${activity.id}`,
+        personaId: "fitness",
+        condition: null,
+        activity: activity.id
+      });
+    });
+
+    // Remove duplicate requests while keeping the first occurrence.
+    const uniqueRequests = Array.from(
+      new Map(requests.map((item) => [item.cacheKey, item])).values()
+    );
+
+    // Fetch all requested persona/sub-lens data in parallel.
+    await Promise.all(
+      uniqueRequests.map(async (item) => {
+        let url =
+          `/api/home?city=${encodeURIComponent(city)}` +
+          `&persona=${encodeURIComponent(item.personaId)}`;
+
+        if (item.personaId === "health") {
+          url += `&condition=${encodeURIComponent(item.condition || "general")}`;
+        }
+
+        if (item.personaId === "fitness") {
+          url += `&activity=${encodeURIComponent(item.activity || "general")}`;
+        }
+
+        if (lat != null && lon != null) {
+          url +=
+            `&lat=${encodeURIComponent(lat)}` +
+            `&lon=${encodeURIComponent(lon)}`;
+        }
+
+        const data = await fetchJSON(url);
+
+        // Only cache data belonging to this exact location.
+        if (requestId === homeRequestId) {
+          personaCache.set(item.cacheKey, data);
+        }
+      })
+    );
+
+    // Ignore the whole result if another location was selected.
     if (requestId !== homeRequestId) return;
 
-    results.forEach(({ personaId, data }) => {
-      const cacheKey = `${city}|${lat}|${lon}|${personaId}`;
-      personaCache.set(cacheKey, data);
-    });
+    // Select the exact currently active main persona/sub-lens.
+    let currentKey;
 
-    const currentKey =
-      `${city}|${lat}|${lon}|${state.activeId}`;
+    if (state.activeId === "health") {
+      currentKey =
+        `${city}|${lat}|${lon}|health|condition|${state.healthCondition}`;
+    } else if (state.activeId === "fitness") {
+      currentKey =
+        `${city}|${lat}|${lon}|fitness|activity|${state.fitnessActivity}`;
+    } else {
+      currentKey =
+        `${city}|${lat}|${lon}|${state.activeId}`;
+    }
 
     const currentData = personaCache.get(currentKey);
 
@@ -738,13 +783,22 @@ function setPersona(id) {
   if (!state.location) return;
 
   const location = state.location;
-  const cacheKey =
-    `${location.city}|${location.latitude}|${location.longitude}|${id}`;
+  let cacheKey;
+
+  if (id === "health") {
+    cacheKey =
+      `${location.city}|${location.latitude}|${location.longitude}|health|condition|${state.healthCondition}`;
+  } else if (id === "fitness") {
+    cacheKey =
+      `${location.city}|${location.latitude}|${location.longitude}|fitness|activity|${state.fitnessActivity}`;
+  } else {
+    cacheKey =
+      `${location.city}|${location.latitude}|${location.longitude}|${id}`;
+  }
 
   const cachedData = personaCache.get(cacheKey);
 
   if (cachedData) {
-    // Instant persona switch: use the data already loaded for this location.
     state.home = cachedData;
     state.homeLoading = false;
     state.error = null;
@@ -752,19 +806,54 @@ function setPersona(id) {
     return;
   }
 
-  // Fallback if the persona was not preloaded.
   loadHome();
 }
 
 function setHealthCondition(condition) {
   state.healthCondition = condition;
   localStorage.setItem("mausam_health_condition", condition);
+
+  if (!state.location) return;
+
+  const location = state.location;
+  const cacheKey =
+    `${location.city}|${location.latitude}|${location.longitude}|health|condition|${condition}`;
+
+  const cachedData = personaCache.get(cacheKey);
+
+  if (cachedData) {
+    state.home = cachedData;
+    state.homeLoading = false;
+    state.error = null;
+    render();
+    return;
+  }
+
+  // Fallback if this sub-lens was not preloaded.
   loadHome();
 }
 
 function setFitnessActivity(activity) {
   state.fitnessActivity = activity;
   localStorage.setItem("mausam_fitness_activity", activity);
+
+  if (!state.location) return;
+
+  const location = state.location;
+  const cacheKey =
+    `${location.city}|${location.latitude}|${location.longitude}|fitness|activity|${activity}`;
+
+  const cachedData = personaCache.get(cacheKey);
+
+  if (cachedData) {
+    state.home = cachedData;
+    state.homeLoading = false;
+    state.error = null;
+    render();
+    return;
+  }
+
+  // Fallback if this sub-lens was not preloaded.
   loadHome();
 }
 
@@ -793,6 +882,11 @@ function escapeHtml(str) {
 function setLocation(index) {
   const loc = state.locations[index];
   if (!loc) return;
+
+  // A new location needs a completely fresh set of persona/sub-lens data.
+  personaCache.clear();
+  homeRequestId++;
+
   state.location = loc;
   state.locationOpen = false;
   state.locationQuery = "";
