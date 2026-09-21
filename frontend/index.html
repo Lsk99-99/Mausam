@@ -436,6 +436,11 @@ let state = {
 
 let searchDebounce = null;
 
+// Cache complete persona data for the selected location.
+// Location changes preload all main personas; persona switches use this cache.
+const personaCache = new Map();
+let homeRequestId = 0;
+
 function getGreeting() {
   const h = new Date().getHours();
   if (h < 12) return "Good morning";
@@ -584,6 +589,8 @@ async function resendOtp() {
 }
 
 function completeAuth(data) {
+  personaCache.clear();
+  homeRequestId++;
   authToken = data.token;
   authUser = { name: data.name, identifier: data.identifier };
   localStorage.setItem("mausam_token", authToken);
@@ -601,6 +608,8 @@ function logout() {
   state.home = null;
   state.personas = [];
   state.locations = [];
+  personaCache.clear();
+  homeRequestId++;
   authMode = "login";
   authError = null;
   authNotice = null;
@@ -616,6 +625,8 @@ function forceLogout(reason) {
   state.home = null;
   state.personas = [];
   state.locations = [];
+  personaCache.clear();
+  homeRequestId++;
   authMode = "login";
   authError = reason || null;
   authNotice = null;
@@ -645,42 +656,103 @@ async function boot() {
 
 async function loadHome() {
   if (!state.location) return;
+
+  const requestId = ++homeRequestId;
+
+  // Freeze the selected location for this request.
+  const selectedLocation = state.location;
+  const city = selectedLocation.city;
+  const lat = selectedLocation.latitude;
+  const lon = selectedLocation.longitude;
+
   state.homeLoading = true;
   state.error = null;
-  // Clear the previous persona's stats right away so the UI shows a
-  // loading state instead of stale AQI/pollen/etc. from the old persona
-  // while the new fetch is in flight.
+
+  // A location change is a full reload, so clear the old persona metrics.
   if (state.home) {
     state.home = { ...state.home, personaMetrics: null };
   }
+
   render();
+
   try {
-    let url = `/api/home?city=${encodeURIComponent(state.location.city)}&persona=${state.activeId}`;
-    if (state.activeId === "health") {
-      url += `&condition=${encodeURIComponent(state.healthCondition)}`;
+    // Preload ALL main personas in parallel for this location.
+    const requests = state.personas.map(async (persona) => {
+      let url =
+        `/api/home?city=${encodeURIComponent(city)}` +
+        `&persona=${encodeURIComponent(persona.id)}`;
+
+      if (persona.id === "health") {
+        url += `&condition=${encodeURIComponent(state.healthCondition)}`;
+      }
+
+      if (persona.id === "fitness") {
+        url += `&activity=${encodeURIComponent(state.fitnessActivity)}`;
+      }
+
+      if (lat != null && lon != null) {
+        url +=
+          `&lat=${encodeURIComponent(lat)}` +
+          `&lon=${encodeURIComponent(lon)}`;
+      }
+
+      const data = await fetchJSON(url);
+      return { personaId: persona.id, data };
+    });
+
+    const results = await Promise.all(requests);
+
+    // Ignore an old location load if a newer location was selected.
+    if (requestId !== homeRequestId) return;
+
+    results.forEach(({ personaId, data }) => {
+      const cacheKey = `${city}|${lat}|${lon}|${personaId}`;
+      personaCache.set(cacheKey, data);
+    });
+
+    const currentKey =
+      `${city}|${lat}|${lon}|${state.activeId}`;
+
+    const currentData = personaCache.get(currentKey);
+
+    if (currentData) {
+      state.home = currentData;
     }
-    if (state.activeId === "fitness") {
-      url += `&activity=${encodeURIComponent(state.fitnessActivity)}`;
-    }
-    // Pass through coordinates already resolved by location search —
-    // avoids a second, less reliable re-geocode by name alone, which
-    // matters most for villages/small towns (more prone to name
-    // collisions or sparse data than major cities).
-    if (state.location.latitude != null && state.location.longitude != null) {
-      url += `&lat=${state.location.latitude}&lon=${state.location.longitude}`;
-    }
-    const data = await fetchJSON(url);
-    state.home = data;
+
     state.homeLoading = false;
   } catch (e) {
+    if (requestId !== homeRequestId) return;
+
     state.homeLoading = false;
-    state.error = e.message || "Couldn't load weather data — check that both backend services are running.";
+    state.error =
+      e.message ||
+      "Couldn't load weather data — check that both backend services are running.";
   }
+
   render();
 }
 
 function setPersona(id) {
   state.activeId = id;
+
+  if (!state.location) return;
+
+  const location = state.location;
+  const cacheKey =
+    `${location.city}|${location.latitude}|${location.longitude}|${id}`;
+
+  const cachedData = personaCache.get(cacheKey);
+
+  if (cachedData) {
+    // Instant persona switch: use the data already loaded for this location.
+    state.home = cachedData;
+    state.homeLoading = false;
+    state.error = null;
+    render();
+    return;
+  }
+
+  // Fallback if the persona was not preloaded.
   loadHome();
 }
 
