@@ -400,7 +400,14 @@ async function fetchJSON(path, options = {}) {
     headers["Authorization"] = `Bearer ${authToken}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  // Weather data must never be served from the browser HTTP cache.
+  // In particular, a location change must always request the newly selected
+  // city's data from the API.
+  const fetchOptions = { ...options, headers };
+  if (path.startsWith('/api/home')) {
+    fetchOptions.cache = 'no-store';
+  }
+  const res = await fetch(`${API_BASE}${path}`, fetchOptions);
   if (!res.ok) {
     let msg = `${path} → HTTP ${res.status}`;
     try {
@@ -735,6 +742,21 @@ async function loadHome() {
   try {
     const requests = [];
 
+    // Identify the exact data needed for the persona currently on screen.
+    // We show that weather as soon as it arrives; the other persona/lens
+    // requests can continue loading in the background.
+    let activeCacheKey;
+    if (state.activeId === "health") {
+      activeCacheKey =
+        `${city}|${lat}|${lon}|health|condition|${state.healthCondition}`;
+    } else if (state.activeId === "fitness") {
+      activeCacheKey =
+        `${city}|${lat}|${lon}|fitness|activity|${state.fitnessActivity}`;
+    } else {
+      activeCacheKey =
+        `${city}|${lat}|${lon}|${state.activeId}`;
+    }
+
     // Preload every main persona.
     state.personas.forEach((persona) => {
       requests.push({
@@ -802,10 +824,25 @@ async function loadHome() {
               `&lon=${encodeURIComponent(lon)}`;
           }
 
+          // Extra client-side cache buster. The backend still receives the
+          // exact selected city/coordinates, but the browser/proxy cannot
+          // reuse a previous /api/home response for a different location.
+          url += `&_locationRequest=${requestId}`;
+
           const data = await fetchJSON(url);
 
           if (requestId === homeRequestId) {
             personaCache.set(item.cacheKey, data);
+
+            // IMPORTANT: do not wait for every persona to finish before
+            // showing the newly selected city's weather. The active persona
+            // is enough to replace the old city's weather immediately.
+            if (item.cacheKey === activeCacheKey) {
+              state.home = data;
+              state.homeLoading = false;
+              state.error = null;
+              render();
+            }
           }
         } catch (error) {
           // Keep the other lenses loading even if one request fails.
@@ -826,27 +863,15 @@ async function loadHome() {
     // Ignore the whole result if another location was selected.
     if (requestId !== homeRequestId) return;
 
-    // Select the exact currently active main persona/sub-lens.
-    let currentKey;
-
-    if (state.activeId === "health") {
-      currentKey =
-        `${city}|${lat}|${lon}|health|condition|${state.healthCondition}`;
-    } else if (state.activeId === "fitness") {
-      currentKey =
-        `${city}|${lat}|${lon}|fitness|activity|${state.fitnessActivity}`;
-    } else {
-      currentKey =
-        `${city}|${lat}|${lon}|${state.activeId}`;
-    }
-
-    const currentData = personaCache.get(currentKey);
+    // The active persona normally updated state.home as soon as its own
+    // request completed. Keep this final check as a safety net in case it
+    // was already cached by another request.
+    const currentData = personaCache.get(activeCacheKey);
 
     if (currentData) {
       state.home = currentData;
+      state.homeLoading = false;
     }
-
-    state.homeLoading = false;
   } catch (e) {
     if (requestId !== homeRequestId) return;
 
@@ -1018,13 +1043,20 @@ function setLocation(index) {
   const loc = state.locations[index];
   if (!loc) return;
 
-  // A new location needs a completely fresh set of persona/sub-lens data.
+  // Location changes are a hard data boundary. Never keep or display the
+  // previous city's weather while the new city's request is in flight.
   personaCache.clear();
   homeRequestId++;
+  state.home = null;
+  state.homeLoading = true;
+  state.error = null;
 
-  state.location = loc;
+  // Copy the selected location so a later search-result update cannot mutate
+  // the location used by the active weather request.
+  state.location = { ...loc };
   state.locationOpen = false;
   state.locationQuery = "";
+  render();
   loadHome();
 }
 
