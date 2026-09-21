@@ -20,7 +20,11 @@ public class AuthController {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
 
-    public AuthController(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtUtil jwtUtil) {
+    public AuthController(
+            UserRepository userRepository,
+            PasswordEncoder passwordEncoder,
+            JwtUtil jwtUtil
+    ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
@@ -29,25 +33,54 @@ public class AuthController {
     @PostMapping("/signup")
     public AuthResponse signup(@Valid @RequestBody SignupRequest request) {
         if (userRepository.existsByEmail(request.email())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "An account with this email already exists");
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "An account with this email already exists"
+            );
         }
-        User user = new User(request.name(), request.email(), passwordEncoder.encode(request.password()));
+
+        User user = new User(
+                request.name(),
+                request.email(),
+                passwordEncoder.encode(request.password())
+        );
+
         userRepository.save(user);
+
         String token = jwtUtil.generateToken(user.getEmail());
-        return new AuthResponse(token, user.getName(), user.getEmail());
+
+        return new AuthResponse(
+                token,
+                user.getName(),
+                user.getEmail()
+        );
     }
 
     @PostMapping("/login")
     public AuthResponse login(@Valid @RequestBody LoginRequest request) {
         User user = userRepository.findByEmail(request.email())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid email or password"));
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.UNAUTHORIZED,
+                        "Invalid email or password"
+                ));
 
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid email or password");
+        if (!passwordEncoder.matches(
+                request.password(),
+                user.getPasswordHash()
+        )) {
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Invalid email or password"
+            );
         }
 
         String token = jwtUtil.generateToken(user.getEmail());
-        return new AuthResponse(token, user.getName(), user.getEmail());
+
+        return new AuthResponse(
+                token,
+                user.getName(),
+                user.getEmail()
+        );
     }
 
     @PostMapping("/guest")
@@ -59,8 +92,11 @@ public class AuthController {
                     User user = new User(
                             "Mausam Guest",
                             guestEmail,
-                            passwordEncoder.encode(UUID.randomUUID().toString())
+                            passwordEncoder.encode(
+                                    java.util.UUID.randomUUID().toString()
+                            )
                     );
+
                     return userRepository.save(user);
                 });
 
@@ -73,4 +109,3 @@ public class AuthController {
         );
     }
 }
-s
