@@ -392,17 +392,29 @@ function conditionIcon(condition) {
 
 async function fetchJSON(path, options = {}) {
   const headers = { ...(options.headers || {}) };
-  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+
+  // Auth endpoints must never receive an old/expired JWT.
+  // All other protected endpoints automatically receive the current token.
+  const isAuthEndpoint = path.startsWith("/api/auth/");
+  if (authToken && !isAuthEndpoint) {
+    headers["Authorization"] = `Bearer ${authToken}`;
+  }
+
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!res.ok) {
     let msg = `${path} → HTTP ${res.status}`;
     try {
       const body = await res.json();
       if (body?.message) msg = body.message;
-      if (res.status === 401 && (body?.error === "no_token_provided" || body?.error === "invalid_or_expired_token")) {
-        // Session is gone (expired token, or none at all) — bounce back
-        // to the login screen with a clear reason instead of leaving the
-        // user staring at a confusing generic error on a broken page.
+      else if (body?.error && typeof body.error === "string") msg = body.error;
+      else if (body?.detail && typeof body.detail === "string") msg = body.detail;
+
+      if (
+        res.status === 401 &&
+        !isAuthEndpoint &&
+        (body?.error === "no_token_provided" || body?.error === "invalid_or_expired_token")
+      ) {
+        // Only protected API failures invalidate the current session.
         forceLogout("Your session expired — please log in again.");
       }
     } catch (e) { /* response wasn't JSON — keep default message */ }
@@ -502,6 +514,13 @@ function renderAuthScreen() {
             ${isSignup ? "Already have an account?" : "New to Mausam?"}
             <button type="button" onclick="switchAuthMode()">${isSignup ? "Log In" : "Sign Up"}</button>
           </div>
+
+          <button type="button" class="auth-btn"
+            style="margin-top:10px; background:#E7EEEA; color:#2F6E68;"
+            onclick="continueAsGuest()"
+            ${authSubmitting ? "disabled" : ""}>
+            Continue as Guest
+          </button>
         `}
       </div>
     </div>
@@ -520,10 +539,39 @@ function switchAuthMode() {
   renderAuthScreen();
 }
 
+async function continueAsGuest() {
+  authSubmitting = true;
+  authError = null;
+  authNotice = null;
+
+  // Guest login starts clean and receives a normal JWT from the backend.
+  authToken = null;
+  localStorage.removeItem("mausam_token");
+  localStorage.removeItem("mausam_user");
+
+  renderAuthScreen();
+
+  try {
+    const data = await fetchJSON("/api/auth/guest", {
+      method: "POST"
+    });
+    completeAuth(data);
+  } catch (e) {
+    authSubmitting = false;
+    authError = e.message || "Guest access is temporarily unavailable.";
+    renderAuthScreen();
+  }
+}
+
 async function submitAuth() {
   const identifier = document.getElementById("auth-identifier").value.trim();
   const password = document.getElementById("auth-password").value;
   const name = authMode === "signup" ? document.getElementById("auth-name").value.trim() : undefined;
+
+  // Start authentication from a clean session. This prevents an expired
+  // token from a previous session from interfering with login/signup.
+  authToken = null;
+  localStorage.removeItem("mausam_token");
 
   authSubmitting = true;
   authError = null;
@@ -547,7 +595,7 @@ async function submitAuth() {
     }
   } catch (e) {
     authSubmitting = false;
-    authError = e.message || "Something went wrong — please try again.";
+    authError = e.message || "Authentication failed — please check your details and try again.";
     renderAuthScreen();
   }
 }
@@ -591,8 +639,19 @@ async function resendOtp() {
 function completeAuth(data) {
   personaCache.clear();
   homeRequestId++;
+
+  if (!data || !data.token) {
+    authSubmitting = false;
+    authError = data?.message || "Login succeeded but the server did not return an authentication token.";
+    renderAuthScreen();
+    return;
+  }
+
   authToken = data.token;
-  authUser = { name: data.name, identifier: data.identifier };
+  authUser = {
+    name: data.name || data.identifier || "Mausam User",
+    identifier: data.identifier || data.email || ""
+  };
   localStorage.setItem("mausam_token", authToken);
   localStorage.setItem("mausam_user", JSON.stringify(authUser));
   authSubmitting = false;
@@ -711,34 +770,57 @@ async function loadHome() {
       new Map(requests.map((item) => [item.cacheKey, item])).values()
     );
 
-    // Fetch all requested persona/sub-lens data in parallel.
+    // Preload with controlled concurrency. This still preloads every
+    // persona and every Health/Fitness sub-lens, but avoids sending
+    // 20+ requests to the backend at exactly the same moment.
+    const PRELOAD_CONCURRENCY = 5;
+    let nextRequestIndex = 0;
+
+    async function preloadWorker() {
+      while (true) {
+        const index = nextRequestIndex++;
+        if (index >= uniqueRequests.length) return;
+
+        const item = uniqueRequests[index];
+
+        try {
+          let url =
+            `/api/home?city=${encodeURIComponent(city)}` +
+            `&persona=${encodeURIComponent(item.personaId)}`;
+
+          if (item.personaId === "health") {
+            url += `&condition=${encodeURIComponent(item.condition || "general")}`;
+          }
+
+          if (item.personaId === "fitness") {
+            url += `&activity=${encodeURIComponent(item.activity || "general")}`;
+          }
+
+          if (lat != null && lon != null) {
+            url +=
+              `&lat=${encodeURIComponent(lat)}` +
+              `&lon=${encodeURIComponent(lon)}`;
+          }
+
+          const data = await fetchJSON(url);
+
+          if (requestId === homeRequestId) {
+            personaCache.set(item.cacheKey, data);
+          }
+        } catch (error) {
+          // Keep the other lenses loading even if one request fails.
+          console.warn("Preload failed:", item.cacheKey, error);
+        }
+      }
+    }
+
+    const workerCount = Math.min(
+      PRELOAD_CONCURRENCY,
+      uniqueRequests.length
+    );
+
     await Promise.all(
-      uniqueRequests.map(async (item) => {
-        let url =
-          `/api/home?city=${encodeURIComponent(city)}` +
-          `&persona=${encodeURIComponent(item.personaId)}`;
-
-        if (item.personaId === "health") {
-          url += `&condition=${encodeURIComponent(item.condition || "general")}`;
-        }
-
-        if (item.personaId === "fitness") {
-          url += `&activity=${encodeURIComponent(item.activity || "general")}`;
-        }
-
-        if (lat != null && lon != null) {
-          url +=
-            `&lat=${encodeURIComponent(lat)}` +
-            `&lon=${encodeURIComponent(lon)}`;
-        }
-
-        const data = await fetchJSON(url);
-
-        // Only cache data belonging to this exact location.
-        if (requestId === homeRequestId) {
-          personaCache.set(item.cacheKey, data);
-        }
-      })
+      Array.from({ length: workerCount }, () => preloadWorker())
     );
 
     // Ignore the whole result if another location was selected.
@@ -809,6 +891,59 @@ function setPersona(id) {
   loadHome();
 }
 
+async function loadSingleLens(personaId, lensValue) {
+  if (!state.location) return;
+
+  const location = state.location;
+  const city = location.city;
+  const lat = location.latitude;
+  const lon = location.longitude;
+
+  let cacheKey;
+  let url =
+    `/api/home?city=${encodeURIComponent(city)}` +
+    `&persona=${encodeURIComponent(personaId)}`;
+
+  if (personaId === "health") {
+    cacheKey =
+      `${city}|${lat}|${lon}|health|condition|${lensValue}`;
+    url += `&condition=${encodeURIComponent(lensValue)}`;
+  } else {
+    cacheKey =
+      `${city}|${lat}|${lon}|fitness|activity|${lensValue}`;
+    url += `&activity=${encodeURIComponent(lensValue)}`;
+  }
+
+  if (lat != null && lon != null) {
+    url +=
+      `&lat=${encodeURIComponent(lat)}` +
+      `&lon=${encodeURIComponent(lon)}`;
+  }
+
+  try {
+    const data = await fetchJSON(url);
+
+    if (
+      state.location !== location ||
+      (personaId === "health" && state.healthCondition !== lensValue) ||
+      (personaId === "fitness" && state.fitnessActivity !== lensValue)
+    ) {
+      return;
+    }
+
+    personaCache.set(cacheKey, data);
+    state.activeId = personaId;
+    state.home = data;
+    state.homeLoading = false;
+    state.error = null;
+    render();
+  } catch (e) {
+    state.homeLoading = false;
+    state.error = e.message || "Couldn't load this lens.";
+    render();
+  }
+}
+
 function setHealthCondition(condition) {
   state.healthCondition = condition;
   localStorage.setItem("mausam_health_condition", condition);
@@ -829,8 +964,8 @@ function setHealthCondition(condition) {
     return;
   }
 
-  // Fallback if this sub-lens was not preloaded.
-  loadHome();
+  // Normally this is already cached. If not, load only this sub-lens.
+  loadSingleLens("health", condition);
 }
 
 function setFitnessActivity(activity) {
@@ -853,8 +988,8 @@ function setFitnessActivity(activity) {
     return;
   }
 
-  // Fallback if this sub-lens was not preloaded.
-  loadHome();
+  // Normally this is already cached. If not, load only this sub-lens.
+  loadSingleLens("fitness", activity);
 }
 
 function toggleLocation() {

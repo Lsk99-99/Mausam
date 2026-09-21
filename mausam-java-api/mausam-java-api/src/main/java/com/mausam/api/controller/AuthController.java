@@ -49,4 +49,23 @@ public class AuthController {
         String token = jwtUtil.generateToken(user.getEmail());
         return new AuthResponse(token, user.getName(), user.getEmail());
     }
+
+    @PostMapping("/guest")
+    public AuthResponse guest() {
+        // One shared demo identity means every visitor can enter without
+        // creating an account, while /api/home remains JWT-protected.
+        final String guestEmail = "guest@mausam.demo";
+
+        User guest = userRepository.findByEmail(guestEmail).orElseGet(() -> {
+            User user = new User(
+                    "Mausam Guest",
+                    guestEmail,
+                    passwordEncoder.encode(java.util.UUID.randomUUID().toString())
+            );
+            return userRepository.save(user);
+        });
+
+        String token = jwtUtil.generateToken(guest.getEmail());
+        return new AuthResponse(token, guest.getName(), guest.getEmail());
+    }
 }
