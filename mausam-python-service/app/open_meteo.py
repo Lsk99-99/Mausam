@@ -10,6 +10,7 @@ whether to fall back to mock data.
 """
 
 import time
+import threading
 
 import requests
 
@@ -25,30 +26,74 @@ RETRY_DELAY_SECONDS = 0.3
 # don't re-hit the geocoder every time.
 _geocode_cache: dict = {}
 
-# PERFORMANCE: one /api/home request from the frontend triggers three
-# separate calls into this service (current weather, hourly, persona
-# metrics) — each of which independently needs forecast/air-quality/
-# marine data for the same location. Without caching, that's the same
-# Open-Meteo data fetched 2-3x over for a single screen load: slower,
-# and more surface area for a transient network hiccup to break the
-# whole response. This cache means only the first of those calls
-# actually reaches Open-Meteo; the other two reuse the same result.
-# TTL is short (90s) — long enough to cover those near-simultaneous
-# calls, short enough that weather data doesn't go stale. Only
-# successful results are ever cached — a failure is never remembered,
-# so the next call always retries for real.
+# Shared in-memory cache for all requests handled by this Python process.
+# A location can be requested by several persona endpoints at nearly the same
+# time. The per-key locks below prevent a "cache stampede": only ONE request
+# for a given location/data type is allowed to reach Open-Meteo while the
+# others wait for that result.
 _fetch_cache: dict = {}
+_fetch_locks: dict = {}
+_cache_guard = threading.Lock()
+
+# Keep successful forecast/air-quality/marine responses for one hour. Weather
+# model data does not need to be fetched again for every persona card.
 CACHE_TTL_SECONDS = 3600
+
+# If Open-Meteo rate-limits a request, briefly remember that failure so
+# concurrent/repeated frontend calls do not immediately create another
+# request storm. This does NOT create weather data or act as a fallback.
+_RATE_LIMIT_COOLDOWN_SECONDS = 30
+_rate_limit_cache: dict = {}
+
+
+def _get_cache_lock(cache_key):
+    with _cache_guard:
+        return _fetch_locks.setdefault(cache_key, threading.Lock())
 
 
 def _cached_fetch(cache_key, fetch_fn):
+    """Return cached data and coalesce simultaneous requests for one key."""
     now = time.time()
+
     entry = _fetch_cache.get(cache_key)
     if entry is not None and entry[0] > now:
         return entry[1]
-    result = fetch_fn()
-    _fetch_cache[cache_key] = (now + CACHE_TTL_SECONDS, result)
-    return result
+
+    rate_limited_until = _rate_limit_cache.get(cache_key, 0)
+    if rate_limited_until > now:
+        raise OpenMeteoError(
+            "Open-Meteo is temporarily rate limiting this location. "
+            "Please wait a moment and try again."
+        )
+
+    lock = _get_cache_lock(cache_key)
+
+    # Only one thread performs the upstream request. Everyone else waits and
+    # then re-checks the cache.
+    with lock:
+        now = time.time()
+
+        entry = _fetch_cache.get(cache_key)
+        if entry is not None and entry[0] > now:
+            return entry[1]
+
+        rate_limited_until = _rate_limit_cache.get(cache_key, 0)
+        if rate_limited_until > now:
+            raise OpenMeteoError(
+                "Open-Meteo is temporarily rate limiting this location. "
+                "Please wait a moment and try again."
+            )
+
+        try:
+            result = fetch_fn()
+        except OpenMeteoError as exc:
+            if "HTTP 429" in str(exc):
+                _rate_limit_cache[cache_key] = time.time() + _RATE_LIMIT_COOLDOWN_SECONDS
+            raise
+
+        _fetch_cache[cache_key] = (time.time() + CACHE_TTL_SECONDS, result)
+        _rate_limit_cache.pop(cache_key, None)
+        return result
 
 
 class OpenMeteoError(Exception):
@@ -68,7 +113,14 @@ def _get_json(url: str, params: dict, what: str) -> dict:
         if resp.status_code == 429:
             raise OpenMeteoError(
                 f"{what} was rate limited by Open-Meteo (HTTP 429). "
-                "Please try again later."
+                "Please wait a moment and try again."
+            )
+
+        if resp.status_code == 403:
+            raise OpenMeteoError(
+                f"{what} was rejected by Open-Meteo (HTTP 403 Forbidden). "
+                "The upstream service has temporarily denied this request. "
+                "Please wait and try again."
             )
 
         resp.raise_for_status()
