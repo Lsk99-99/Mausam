@@ -407,7 +407,26 @@ async function fetchJSON(path, options = {}) {
   if (path.startsWith('/api/home')) {
     fetchOptions.cache = 'no-store';
   }
-  const res = await fetch(`${API_BASE}${path}`, fetchOptions);
+
+  // Render can cold-start and Open-Meteo can be slow/unavailable. Never let
+  // one request leave the whole app looking blank forever.
+  const controller = new AbortController();
+  const timeoutMs = path.startsWith('/api/home') ? 20000 : 15000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  fetchOptions.signal = controller.signal;
+
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, fetchOptions);
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s. Please try again.`);
+    }
+    throw new Error(`Couldn't reach the Mausam API. Please try again.`);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   if (!res.ok) {
     let msg = `${path} → HTTP ${res.status}`;
     try {
@@ -701,6 +720,12 @@ function forceLogout(reason) {
 }
 
 async function boot() {
+  // Render the shell immediately. Do not leave a blank page while Render's
+  // Java API is waking up.
+  state.bootLoading = true;
+  state.error = null;
+  render();
+
   try {
     const [personas, locations] = await Promise.all([
       fetchJSON("/api/personas"),
@@ -715,7 +740,7 @@ async function boot() {
     await loadHome();
   } catch (e) {
     state.bootLoading = false;
-    state.error = "Can't reach the Mausam API at " + API_BASE + " — is it running? (See mausam-java-api, port 8080)";
+    state.error = e.message || "Couldn't start Mausam. Please try again.";
     render();
   }
 }
